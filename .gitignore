@@ -1,0 +1,58 @@
+# Visual Studio files
+.vs/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+
+# Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Azure storage emulator
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+__blobstorage__/
+
+# Files with potential sensitive information
+appsettings.Development.json
+*.Development.json
+*.private.json
+*.secrets.json
+
+# IDE and editor folders
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.backup
+*.ps1
+
+# Temporary files
+*.tmp
+*.temp
+*.swap
+*.swp
+*~
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

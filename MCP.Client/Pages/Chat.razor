@@ -1,0 +1,316 @@
+@page "/chat"
+@using MCP.Client.Services
+@using MCP.Shared.MCP
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using Microsoft.AspNetCore.Authorization
+@inject SemanticKernelService ChatService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@implements IDisposable
+@attribute [Authorize]
+
+<PageTitle>AI Chat with Graph API</PageTitle>
+
+<h1>AI Chat with Graph API</h1>
+
+<p>Ask questions about your Azure tenant's application registrations.</p>
+
+@if (serviceStatus != null && !serviceStatus.Value.IsAvailable)
+{
+    <div class="alert alert-warning" role="alert">
+        <strong>Warning!</strong> The chat service appears to be unavailable: @serviceStatus.Value.Message
+    </div>
+}
+
+<div class="chat-container">
+    <div class="messages-container">
+        @foreach (var message in ChatService.Messages)
+        {
+            <div class="message @GetMessageClass(message.Role)">
+                <div class="message-header">@GetMessageHeaderText(message.Role)</div>
+                <div class="message-content">@((MarkupString)FormatMessage(message.Content, message.Role))</div>
+            </div>
+        }
+        @if (isLoading)
+        {
+            <div class="message assistant-message">
+                <div class="message-header">Assistant</div>
+                <div class="message-content loading-indicator">
+                    <span>Thinking</span>
+                    <span class="dot">.</span>
+                    <span class="dot">.</span>
+                    <span class="dot">.</span>
+                </div>
+            </div>
+        }
+        <div id="message-end" @ref="messagesEnd"></div>
+    </div>
+
+    <div class="message-input">
+        <textarea @ref="textInput" 
+                 @bind="currentMessage" 
+                 @bind:event="oninput" 
+                 @onkeydown="HandleKeyPress" 
+                 placeholder="Type a message..." 
+                 disabled="@isLoading">
+        </textarea>
+        <button @onclick="SendMessage" disabled="@(isLoading || string.IsNullOrWhiteSpace(currentMessage))">
+            <span class="oi oi-arrow-right" aria-hidden="true"></span>
+        </button>
+    </div>
+</div>
+
+<div class="actions">
+    <button class="btn btn-secondary" @onclick="ClearChat">Clear Chat</button>
+    <button class="btn btn-info" @onclick="CheckServiceAvailabilityAsync">Test Connection</button>
+    <button class="btn btn-primary" @onclick="TestGraphConnectionAsync">Test Graph API</button>
+</div>
+
+@code {
+    private ElementReference messagesEnd;
+    private ElementReference textInput;
+    private string currentMessage = "";
+    private bool isLoading = false;
+    private (bool IsAvailable, string Message)? serviceStatus = null;
+
+    protected override void OnInitialized()
+    {
+        ChatService.OnMessagesChanged += StateHasChanged;
+    }    protected override async Task OnInitializedAsync()
+    {
+        await base.OnInitializedAsync();
+        
+        // Check service availability when the component initializes
+        await CheckServiceAvailabilityAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await ScrollToBottom();
+        if (firstRender)
+        {
+            await FocusTextInput();
+        }
+    }
+      private async Task CheckServiceAvailabilityAsync()
+    {
+        serviceStatus = await ChatService.CheckServiceAvailabilityAsync();
+        StateHasChanged();
+    }
+    
+    private async Task TestGraphConnectionAsync()
+    {
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+        
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.BaseAddress = new Uri(Navigation.BaseUri);
+            
+            var response = await httpClient.GetAsync("mcp/test-graph");
+            string message;
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<dynamic>();
+                message = $"Graph API Test: {(result?.status == "ok" ? "✅ Success" : "❌ Failed")} - {result?.message}";
+            }
+            else
+            {
+                message = $"Failed to test Graph API: {response.StatusCode}";
+            }
+            
+            ChatService.AddMessage(new McpMessage
+            {
+                Role = "system",
+                Content = message
+            });
+        }
+        catch (Exception ex)
+        {
+            ChatService.AddMessage(new McpMessage
+            {
+                Role = "system",
+                Content = $"Error testing Graph API: {ex.Message}"
+            });
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToBottom();
+        }
+    }private async Task SendMessage()
+    {
+        if (string.IsNullOrWhiteSpace(currentMessage) || isLoading)
+            return;
+
+        string messageToSend = currentMessage.Trim();
+        currentMessage = "";
+        isLoading = true;
+
+        try
+        {
+            // Check service availability before sending the message
+            var status = await ChatService.CheckServiceAvailabilityAsync();
+            serviceStatus = status;
+            
+            if (!status.IsAvailable)
+            {
+                // Add error message to the chat
+                ChatService.AddMessage(new McpMessage 
+                { 
+                    Role = "assistant", 
+                    Content = $"Error: The service is unavailable. {status.Message}" 
+                });
+                return;
+            }
+            
+            await ChatService.SendMessageAsync(messageToSend);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+            await ScrollToBottom();
+            await FocusTextInput();
+        }
+    }
+
+    private async Task HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendMessage();
+        }
+    }
+
+    private void ClearChat()
+    {
+        ChatService.ClearMessages();
+    }    private async Task ScrollToBottom()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("scrollToElement", messagesEnd);
+            // Format any JSON in messages
+            await JS.InvokeVoidAsync("updateChatDisplay");
+        }
+        catch
+        {
+            // Ignore errors if element not available
+        }
+    }
+
+    private async Task FocusTextInput()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("focusElement", textInput);
+        }
+        catch
+        {
+            // Ignore errors if element not available
+        }
+    }    private string GetMessageClass(string role)
+    {
+        return role.ToLowerInvariant() switch
+        {
+            "user" => "user-message",
+            "system" => "system-message",
+            "assistant" => "assistant-message",
+            "tool" => "tool-message",
+            "function" => "tool-message",
+            _ => "assistant-message"
+        };
+    }
+
+    private string GetMessageHeaderText(string role)
+    {
+        return role.ToLowerInvariant() switch
+        {
+            "user" => "You",
+            "system" => "System",
+            "assistant" => "Assistant",
+            "tool" => "Graph API",
+            "function" => "Graph API",
+            _ => role
+        };
+    }
+
+    private string FormatMessage(string content, string role = "")
+    {
+        if (string.IsNullOrEmpty(content))
+            return "";
+        
+        // Replace newlines with <br> tags
+        string formatted = content.Replace("\n", "<br />");
+        
+        // Format JSON for better readability when it comes from Graph API
+        if (role == "tool" || role == "function" || content.Contains("\"Value\"") || content.Contains("\"error\""))
+        {
+            try
+            {
+                // Try to identify JSON blocks
+                if (content.TrimStart().StartsWith("{") && content.TrimEnd().EndsWith("}"))
+                {
+                    // Use a JS function to format the JSON (we'll add this in the JS file)
+                    return "<pre class=\"json-output\">" + formatted + "</pre>";
+                }
+            }
+            catch
+            {
+                // If any error occurs during JSON formatting, return the original with line breaks
+            }
+        }
+        
+        // Format code blocks within the message
+        return FormatCodeBlocks(formatted);
+    }
+    
+    private string FormatCodeBlocks(string content)
+    {
+        // Simple formatter for code blocks denoted by ```
+        if (content.Contains("```"))
+        {
+            var parts = content.Split("```");
+            
+            for (int i = 1; i < parts.Length; i += 2)
+            {
+                if (i < parts.Length)
+                {
+                    // Get language if specified
+                    var codeContent = parts[i];
+                    string language = "";
+                    
+                    if (codeContent.Contains("\n"))
+                    {
+                        var firstLine = codeContent.Substring(0, codeContent.IndexOf('\n')).Trim();
+                        if (!string.IsNullOrWhiteSpace(firstLine) && !firstLine.Contains(" "))
+                        {
+                            language = firstLine;
+                            codeContent = codeContent.Substring(codeContent.IndexOf('\n') + 1);
+                        }
+                    }
+                    
+                    // Replace the code part with formatted HTML
+                    parts[i] = $"<pre class=\"code-block{(string.IsNullOrEmpty(language) ? "" : $" language-{language}")}\"><code>{codeContent}</code></pre>";
+                }
+            }
+            
+            return string.Join("", parts);
+        }
+        
+        return content;
+    }
+
+    public void Dispose()
+    {
+        ChatService.OnMessagesChanged -= StateHasChanged;
+    }
+}
