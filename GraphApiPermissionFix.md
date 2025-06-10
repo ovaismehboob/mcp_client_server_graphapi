@@ -16,7 +16,7 @@ To fix this issue, you need to grant the required permissions to your applicatio
 
 1. Sign in to the [Azure portal](https://portal.azure.com)
 2. Navigate to **Azure Active Directory** > **App registrations**
-3. Find and select your application with Client ID: `<YOUR_CLIENT_ID>`
+3. Find and select your application with Client ID: `YOUR_CLIENT_ID`
 4. Go to **API permissions** in the left sidebar
 5. Click **+ Add a permission**
 6. Select **Microsoft Graph** > **Application permissions**
@@ -33,9 +33,9 @@ The application is configured with the following settings in `appsettings.json`:
 ```json
 "AzureAd": {
   "Instance": "https://login.microsoftonline.com/",
-  "TenantId": "<YOUR_TENANT_ID>",
-  "ClientId": "<YOUR_CLIENT_ID>",
-  "ClientSecret": "<YOUR_CLIENT_SECRET>",
+  "TenantId": "YOUR_TENANT_ID",
+  "ClientId": "YOUR_CLIENT_ID",
+  "ClientSecret": "YOUR_CLIENT_SECRET",
   "Scopes": ["User.Read", "Application.Read.All"]
 }
 ```
@@ -59,5 +59,3 @@ If you continue to experience issues:
 2. Verify that the ClientId and TenantId match your Azure AD application
 3. Ensure that the ClientSecret is valid and hasn't expired
 4. Check if your Azure AD account has sufficient privileges to grant the permissions
-
-

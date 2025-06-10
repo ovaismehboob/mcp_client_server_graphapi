@@ -43,7 +43,6 @@ appsettings.Development.json
 # Backup files
 *.bak
 *.backup
-*.ps1
 
 # Temporary files
 *.tmp

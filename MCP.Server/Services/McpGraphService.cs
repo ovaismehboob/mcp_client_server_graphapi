@@ -1,13 +1,10 @@
 using System.Text.Json;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
-using Azure.Core;
 using Azure.Identity;
 using MCP.Shared.MCP;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Kiota.Abstractions.Authentication;
-using Microsoft.Kiota.Abstractions;
 
 namespace MCP.Server.Services;
 
@@ -33,10 +30,8 @@ public class McpGraphService
         _graphServiceClient = InitializeGraphClient();
         
         // Register available MCP functions
-        _functions = InitializeFunctions();    }
-    
-    // Removed InitializeSemanticKernel() method as MCP Server should not talk to LLMs directly
-    private GraphServiceClient InitializeGraphClient()
+        _functions = InitializeFunctions();
+    }    private GraphServiceClient InitializeGraphClient()
     {
         try
         {
@@ -115,16 +110,17 @@ public class McpGraphService
                     Required = new List<string> { "app_id" }
                 }
             }
-        };
-    }    
-    // Removed RegisterFunctions() method as functions don't need to be registered with Semantic Kernel    
+        };    }
+
     public async Task<McpResponse> ProcessMessageAsync(McpRequest request, CancellationToken cancellationToken = default)
     {
         try
         {
             _logger.LogInformation("Processing MCP request with {MessageCount} messages", request.Messages.Count);
             
-            // MCP Server should only be handling function calls, not generating AI responses
+            // This method is now simplified because the client will communicate with the LLM directly
+            // We just need to check if there's a function call in the request context
+            
             if (request.Context != null && 
                 request.Context.TryGetValue("function_call", out var functionCallObj) &&
                 functionCallObj is JsonElement jsonElement && 
@@ -138,14 +134,13 @@ public class McpGraphService
                         _logger.LogInformation("Executing function: {FunctionName}", functionCall.Name);
                         var result = await ExecuteFunctionAsync(functionCall.Name, functionCall.Arguments, cancellationToken);
                         
-                        // Return the function result as a raw JSON string
+                        // Return the function result
                         return new McpResponse
                         {
                             Message = new McpMessage
                             {
                                 Role = "function",
-                                Name = functionCall.Name,
-                                Content = result
+                                Content = JsonSerializer.Serialize(result)
                             },
                             AvailableFunctions = _functions
                         };
@@ -166,13 +161,13 @@ public class McpGraphService
                 }
             }
             
-            // If no function call or we couldn't process it, just return available functions
+            // If no function call or we couldn't process it, return available functions
             return new McpResponse
             {
                 Message = new McpMessage
                 {
-                    Role = "system",
-                    Content = "No valid function call was provided in the request."
+                    Role = "assistant",
+                    Content = "No function was called or the function call could not be processed."
                 },
                 AvailableFunctions = _functions
             };
@@ -185,18 +180,13 @@ public class McpGraphService
             {
                 Message = new McpMessage
                 {
-                    Role = "system",
-                    Content = $"Error: {ex.Message}"
+                    Role = "assistant",
+                    Content = $"I apologize, but an error occurred: {ex.Message}"
                 },
-                AvailableFunctions = _functions
-            };
-        }    }
-    
-    private Task<string> GetAppRegistrationsAsync()
-    {
-        return GetAppRegistrationsInternalAsync();
+                AvailableFunctions = _functions            };
+        }
     }
-    
+
     private async Task<string> GetAppRegistrationsInternalAsync()
     {
         try
@@ -288,14 +278,11 @@ public class McpGraphService
                 error = $"Error getting application registrations", 
                 details = errorDetail
             });
-        }    }
-    
-    private Task<string> GetAppRegistrationDetailsAsync(string appId)
+        }
+    }    private Task<string> GetAppRegistrationDetailsAsync(string appId)
     {
         return GetAppRegistrationDetailsInternalAsync(appId);
-    }
-    
-    private async Task<string> GetAppRegistrationDetailsInternalAsync(string appId)
+    }    private async Task<string> GetAppRegistrationDetailsInternalAsync(string appId)
     {
         try
         {
@@ -526,10 +513,11 @@ public class McpGraphService
         _logger.LogInformation("Returning {Count} available functions", _functions.Count);
         return _functions;
     }
-      /// <summary>
+    
+    /// <summary>
     /// Executes a function by name with the provided arguments
     /// </summary>
-    public async Task<string> ExecuteFunctionAsync(string functionName, Dictionary<string, object> arguments, CancellationToken cancellationToken)
+    public async Task<object> ExecuteFunctionAsync(string functionName, Dictionary<string, object> arguments, CancellationToken cancellationToken)
     {
         try
         {
@@ -541,14 +529,17 @@ public class McpGraphService
             if (availableFunction == null)
             {
                 _logger.LogWarning("Function {FunctionName} not found", functionName);
-                return JsonSerializer.Serialize(new { error = $"Function '{functionName}' not found" });
+                return new { error = $"Function '{functionName}' not found" };
             }
             
-            // Execute the appropriate function based on function name
+            // Execute the appropriate function
+            string result;
+            
             switch (functionName)
             {
                 case "get_app_registrations":
-                    return await GetAppRegistrationsInternalAsync();
+                    result = await GetAppRegistrationsInternalAsync();
+                    break;
                     
                 case "get_app_registration_details":
                     var appId = "";
@@ -556,17 +547,28 @@ public class McpGraphService
                     {
                         appId = appIdObj?.ToString() ?? "";
                     }
-                    return await GetAppRegistrationDetailsInternalAsync(appId);
+                    result = await GetAppRegistrationDetailsInternalAsync(appId);
+                    break;
                     
                 default:
                     _logger.LogWarning("Function implementation for {FunctionName} not found", functionName);
-                    return JsonSerializer.Serialize(new { error = $"Function implementation for '{functionName}' not found" });
+                    return new { error = $"Function implementation for '{functionName}' not found" };
+            }
+            
+            // Try to parse the result as JSON, otherwise return as string
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<object>(result) ?? new { result = result };
+            }
+            catch
+            {
+                return new { result = result };
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error executing function {FunctionName}", functionName);
-            return JsonSerializer.Serialize(new { error = $"Error executing function: {ex.Message}" });
+            return new { error = $"Error executing function: {ex.Message}" };
         }
     }
 }
